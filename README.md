@@ -1,5 +1,7 @@
 # Witch Hunt — local Indic STT + React UI
 
+**Remote:** [github.com/itsthusharashenoi/witch-hunt](https://github.com/itsthusharashenoi/witch-hunt)
+
 Monorepo layout:
 
 | Path | Purpose |
