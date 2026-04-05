@@ -10,6 +10,53 @@
     #0c0f14;
 }
 
+.engine-row {
+  margin-bottom: 1.25rem;
+}
+
+.engine-label {
+  display: block;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6d7582;
+  margin-bottom: 0.5rem;
+}
+
+.engine-toggle {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.engine-toggle button {
+  flex: 1;
+  padding: 0.55rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #12161d;
+  color: #a8aeb8;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.engine-toggle button:hover:not(:disabled) {
+  color: #e8eaef;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.engine-toggle button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.engine-toggle button.active {
+  background: rgba(120, 90, 200, 0.22);
+  border-color: rgba(160, 130, 240, 0.45);
+  color: #e8e4ff;
+}
+
 .app h1 {
   margin: 0 0 0.35rem;
   font-size: 1.5rem;
@@ -195,11 +242,27 @@
 }
 
 .transcript-box .chunk {
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
 .transcript-box .chunk:last-child {
   margin-bottom: 0;
+}
+
+.lang-tag {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #b8a0e8;
+}
+
+.chunk-text {
+  color: #dce0e8;
+  line-height: 1.5;
 }
 
 .log {

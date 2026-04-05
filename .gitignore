@@ -14,6 +14,7 @@ __pycache__/
 
 # Python venv
 vexyl-stt/venv/
+whisper-pipeline/venv/
 
 # Node
 vexyl-stt-ui/node_modules/
