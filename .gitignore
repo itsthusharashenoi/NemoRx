@@ -1,0 +1,25 @@
+.DS_Store
+*.pyc
+__pycache__/
+*.log
+
+# Hugging Face / local secrets (never commit)
+.env.secrets
+**/.env.secrets
+
+# Local env overrides (use *.example files)
+.env
+!**/.env.example
+!**/.env.secrets.example
+
+# Python venv
+vexyl-stt/venv/
+
+# Node
+vexyl-stt-ui/node_modules/
+vexyl-stt-ui/dist/
+
+# Build / caches
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
