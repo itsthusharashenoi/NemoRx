@@ -1,5 +1,5 @@
 /**
- * Online STT via the DocScribe / VEXYL HTTP proxy (Gemini API key stays on the server).
+ * Online STT via the NemoRx / VEXYL HTTP proxy (Gemini API key stays on the server).
  */
 
 export async function fetchSttHealth(httpBase) {

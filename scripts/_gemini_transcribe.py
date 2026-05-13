@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Transcribe one audio file with Google Gemini (generateContent). Used by gemini-record-transcribe.sh.
+Transcribe one audio file with Google Gemini (generateContent). NemoRx — used by gemini-record-transcribe.sh.
 API key: environment, then scripts/.env.secrets, then vexyl-stt/.env.secrets.
 """
 from __future__ import annotations
@@ -382,7 +382,7 @@ def _maybe_rename_with_patient(
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Transcribe audio with Gemini 2.5 Flash")
+    ap = argparse.ArgumentParser(description="NemoRx: transcribe audio with Gemini 2.5 Flash")
     ap.add_argument("audio", type=Path, help="Input audio file")
     ap.add_argument("output", type=Path, help="Output transcript (.txt)")
     ap.add_argument(

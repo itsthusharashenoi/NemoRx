@@ -1,5 +1,5 @@
 #!/bin/bash
-# Optional: start local VEXYL-STT + legacy browser UI (not the main Docscribe workflow).
+# Optional: start local VEXYL-STT + legacy browser UI (not the main NemoRx terminal workflow).
 # Primary capture: ./scripts/gemini-record-transcribe.sh (Gemini in terminal).
 # Start VEXYL-STT server + React UI (both on localhost).
 set -e

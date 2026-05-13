@@ -1,4 +1,11 @@
-# Docscribe — terminal capture + Gemini transcription
+# NemoRx — terminal capture + Gemini transcription
+
+| Path | Purpose |
+|------|---------|
+| `scripts/` | Terminal capture + Gemini (`gemini-record-transcribe.sh`, `_gemini_transcribe.py`) |
+| `vexyl-stt/` | Optional offline STT server (patched VEXYL / Indic Conformer) |
+| `vexyl-stt-ui/` | Optional Vite + React client for local STT |
+| `start-local.sh` | One command to run STT + UI together |
 
 **Primary workflow:** record from the microphone in the terminal, stop with **Ctrl+C**, then get:
 
@@ -9,7 +16,7 @@ After transcription, a short follow-up call asks Gemini for the **patient’s na
 
 Uses **Google Gemini 2.5 Flash** over the network. Transcription is tuned for **any language** (including Indian languages, English, and code-switching). **Internet is required** for this path.
 
-**Remote:** [github.com/itsthusharashenoi/DocScribe](https://github.com/itsthusharashenoi/DocScribe)
+**Repository:** [github.com/itsthusharashenoi/DocScribe](https://github.com/itsthusharashenoi/DocScribe) — rename the GitHub repo to **NemoRx** whenever you want the URL to match the product name.
 
 ## Quick start (terminal only)
 
@@ -48,4 +55,4 @@ Legacy Vite + React client. **Not part of the recommended workflow** for this pr
 
 ## License
 
-`vexyl-stt/` retains upstream licensing (Apache 2.0). Other project files unless noted are MIT.
+`vexyl-stt/` retains upstream licensing (Apache 2.0). Other NemoRx project files unless noted are MIT.

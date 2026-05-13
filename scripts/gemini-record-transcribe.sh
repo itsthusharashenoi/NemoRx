@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Terminal-only: record microphone → Ctrl+C stops → save WAV under recordings/,
+# NemoRx — terminal-only: record microphone → Ctrl+C stops → save WAV under recordings/,
 # then Gemini 2.5 Flash transcribes to Transcriptis/ with the same basename (.txt).
 #
 # Requires: ffmpeg, python3 (stdlib only for transcription helper)

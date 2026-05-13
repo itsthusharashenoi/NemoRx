@@ -674,7 +674,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <h1>VEXYL-STT</h1>
+      <h1>NemoRx</h1>
       <p className="subtitle">
         <strong>Local</strong> uses the Indic Conformer model (pick one language).{' '}
         <strong>Online (Gemini)</strong> can <strong>auto-detect any language</strong> (and code-switching) or use a
