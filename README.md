@@ -1,22 +1,30 @@
-# DocScribe — clinical speech → transcript → structured prescription
+# NemoRx — clinical speech → transcript → structured prescription
+
+| Path | Purpose |
+|------|---------|
+| `scripts/` | Terminal capture + Gemini (`gemini-record-transcribe.sh`, `prescribe_from_transcript.sh`, `_gemini_transcribe.py`) |
+| `prescription_gen/` | Structured prescription + HTML/PDF pipeline |
+| `vexyl-stt/` | Optional offline STT server (patched VEXYL / Indic Conformer) |
+| `vexyl-stt-ui/` | Optional Vite + React client for local STT |
+| `start-local.sh` | One command to run STT + UI together |
 
 **Team Baby Sharks — Witch Hunt Hackathon (2026)**  
 End-to-end flow: **terminal or UI capture** → **Gemini transcription** (Doc/Patient dialogue) → **prescription pipeline** (rules + optional LLMs) → **hospital-style HTML/PDF**.
 
-**Upstream DocScribe:** [github.com/itsthusharashenoi/DocScribe](https://github.com/itsthusharashenoi/DocScribe)
+**Source repo:** [github.com/itsthusharashenoi/DocScribe](https://github.com/itsthusharashenoi/DocScribe). You can rename the GitHub repo to **NemoRx** whenever you want the URL to match the product name.
 
 ---
 
 ## Repository layout (hackathon monorepo)
 
-DocScribe is intended to sit next to the NLP core used by the prescription generator:
+**Repository:** [github.com/itsthusharashenoi/DocScribe](https://github.com/itsthusharashenoi/DocScribe) — rename the GitHub repo to **NemoRx** whenever you want the URL to match the product name.
 
 ```text
 <repo-root>/
 ├── DocScribe/                 ← this folder (speech + scripts + prescription_gen)
 │   ├── scripts/
 │   │   ├── gemini-record-transcribe.sh
-│   │   ├── prescribe_from_transcript.sh   # NEW: transcript .txt → PDF
+│   │   ├── prescribe_from_transcript.sh   # transcript .txt → PDF
 │   │   └── _gemini_transcribe.py
 │   ├── prescription_gen/      # structured Rx + templates + PDF
 │   ├── recordings/            # gitignored — WAV output
@@ -141,4 +149,4 @@ Legacy Vite + React client — not part of the recommended terminal workflow.
 
 ## License
 
-`vexyl-stt/` retains upstream licensing (Apache 2.0). Other project files unless noted are MIT.
+`vexyl-stt/` retains upstream licensing (Apache 2.0). Other NemoRx project files unless noted are MIT.
