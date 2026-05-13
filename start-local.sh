@@ -1,4 +1,6 @@
 #!/bin/bash
+# Optional: start local VEXYL-STT + legacy browser UI (not the main Docscribe workflow).
+# Primary capture: ./scripts/gemini-record-transcribe.sh (Gemini in terminal).
 # Start VEXYL-STT server + React UI (both on localhost).
 set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -6,14 +8,17 @@ STT="${ROOT}/vexyl-stt"
 UI="${ROOT}/vexyl-stt-ui"
 
 cd "$STT"
-if [ -f .env ]; then
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      ''|\#*) continue ;;
-    esac
-    export "$line"
-  done < .env
-fi
+for _envf in .env .env.secrets; do
+  if [ -f "$_envf" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        ''|\#*) continue ;;
+      esac
+      export "$line"
+    done < "$_envf"
+  fi
+done
+unset _envf
 
 if [ ! -d venv ]; then
   echo "Missing vexyl-stt/venv. Run: cd vexyl-stt && ./setup.sh"
@@ -50,14 +55,17 @@ PORT="${VEXYL_STT_PORT:-8091}"
 echo "Starting VEXYL-STT on ws://127.0.0.1:${PORT}/ ..."
 (
   cd "$STT"
-  if [ -f .env ]; then
-    while IFS= read -r line || [ -n "$line" ]; do
-      case "$line" in
-        ''|\#*) continue ;;
-      esac
-      export "$line"
-    done < .env
-  fi
+  for _envf in .env .env.secrets; do
+    if [ -f "$_envf" ]; then
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          ''|\#*) continue ;;
+        esac
+        export "$line"
+      done < "$_envf"
+    fi
+  done
+  unset _envf
   source venv/bin/activate
   exec python3 vexyl_stt_server.py
 ) &

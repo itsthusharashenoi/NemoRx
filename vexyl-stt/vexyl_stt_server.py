@@ -5,6 +5,7 @@ VEXYL-STT Server
 Wraps ai4bharat/indic-conformer-600m-multilingual in a WebSocket server.
 Accepts 16kHz 16-bit mono PCM audio chunks, returns transcripts as JSON.
 Also exposes a Sarvam-style batch transcription API (POST /batch/transcribe).
+POST /conversation/transcribe accepts a full recording (WebM/WAV/…) and returns a Doc/Patient/Voice-segmented document.
 
 Usage:
     pip install transformers torchaudio websockets numpy torch soundfile
@@ -17,6 +18,8 @@ Optional env vars:
     VEXYL_STT_DECODE          (default: ctc)   options: ctc, rnnt
     VEXYL_STT_DEVICE          (default: auto)  options: auto, cpu, cuda
     VEXYL_STT_API_KEY         (default: empty) shared secret; if set, clients must send X-API-Key header
+    GEMINI_API_KEY / GOOGLE_API_KEY   optional; enables POST /online/gemini/transcribe (Gemini 2.5 Flash STT)
+    GEMINI_MODEL              (default: gemini-2.5-flash)
 """
 
 import asyncio
@@ -36,6 +39,9 @@ import io
 import hmac
 import uuid
 import re
+import base64
+import urllib.request
+import urllib.error
 import soundfile as sf
 from dataclasses import dataclass
 from enum import Enum
@@ -55,6 +61,11 @@ DECODE_MODE = os.getenv("VEXYL_STT_DECODE", "ctc")   # ctc = faster, rnnt = more
 DEVICE_PREF = os.getenv("VEXYL_STT_DEVICE", "auto")
 API_KEY     = os.getenv("VEXYL_STT_API_KEY", "")
 
+# Google Gemini (online STT via generateContent — key stays on server)
+GEMINI_API_KEY = (os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")).strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+GEMINI_MAX_UPLOAD_BYTES = int(os.getenv("GEMINI_MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))
+
 # Audio input: 16kHz 16-bit mono PCM
 TARGET_SAMPLE_RATE = 16000
 
@@ -69,6 +80,19 @@ BATCH_MAX_FILE_SIZE     = 25 * 1024 * 1024  # 25MB
 BATCH_MAX_AUDIO_DURATION = 300.0             # 5 minutes
 BATCH_MAX_JOBS          = 1000
 BATCH_JOB_TTL           = 3600               # 1 hour
+
+# Supported upload extensions (browser recordings often use WebM)
+SUPPORTED_AUDIO_EXTS = (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".webm")
+
+# Conversation document: merge same-utterance gaps shorter than this (hesitations)
+CONV_MERGE_MAX_GAP_SEC = 0.22
+# VAD frame hop for offline segmentation (seconds)
+CONV_VAD_HOP_SEC = 0.02
+# Smoothing window for offline VAD (odd number of hops)
+CONV_VAD_SMOOTH_WIN = 7
+
+# Speaker labels assigned in order of first appearance (cluster → role)
+SPEAKER_LABEL_ORDER = ("Doc", "Patient", "Voice 1", "Voice 2")
 
 # Language code map — VEXYL language codes → model codes
 LANG_MAP = {
@@ -341,6 +365,461 @@ async def transcribe(pcm_float32: np.ndarray, lang_code: str) -> str:
     if len(pcm_float32) == 0:
         return ""
     return await asyncio.to_thread(_run_inference, pcm_float32, lang_code)
+
+
+# ─── Conversation document (full recording → segmented + speaker labels) ─────
+
+def _smooth_bool_flags(flags: list[bool], win: int) -> list[bool]:
+    if not flags or win < 1:
+        return flags
+    half = win // 2
+    n = len(flags)
+    out: list[bool] = []
+    for i in range(n):
+        lo = max(0, i - half)
+        hi = min(n, i + half + 1)
+        chunk = flags[lo:hi]
+        out.append(sum(1 for x in chunk if x) > len(chunk) / 2)
+    return out
+
+
+def _segment_utterance_ranges(pcm: np.ndarray, sr: int = TARGET_SAMPLE_RATE) -> list[tuple[int, int]]:
+    """Energy-based segmentation on full PCM; returns (start, end_excl) sample ranges."""
+    n = len(pcm)
+    if n < int(0.05 * sr):
+        if compute_rms(pcm) > SILENCE_THRESHOLD * 0.4:
+            return [(0, n)]
+        return []
+
+    hop = max(int(CONV_VAD_HOP_SEC * sr), 160)
+    flags: list[bool] = []
+    positions: list[int] = []
+    i = 0
+    while i < n:
+        end = min(i + hop * 2, n)
+        chunk = pcm[i:end]
+        if len(chunk) >= hop // 2:
+            flags.append(compute_rms(chunk) > SILENCE_THRESHOLD)
+            positions.append(i)
+        i += hop
+
+    if not flags:
+        return [(0, n)] if compute_rms(pcm) > SILENCE_THRESHOLD * 0.4 else []
+
+    flags = _smooth_bool_flags(flags, CONV_VAD_SMOOTH_WIN)
+
+    min_speech = max(1, int(MIN_SPEECH_DURATION / (hop / sr)))
+    raw_ranges: list[tuple[int, int]] = []
+    j = 0
+    while j < len(flags):
+        if not flags[j]:
+            j += 1
+            continue
+        k = j
+        while k < len(flags) and flags[k]:
+            k += 1
+        if k - j >= min_speech:
+            start_s = max(0, positions[j] - int(0.08 * sr))
+            end_s = min(n, positions[k - 1] + hop * 2 + int(0.08 * sr))
+            raw_ranges.append((start_s, end_s))
+        j = k
+
+    if not raw_ranges:
+        return [(0, n)] if compute_rms(pcm) > SILENCE_THRESHOLD * 0.35 else []
+
+    merged: list[tuple[int, int]] = []
+    for start_s, end_s in raw_ranges:
+        if not merged:
+            merged.append((start_s, end_s))
+            continue
+        ps, pe = merged[-1]
+        gap_sec = (start_s - pe) / sr
+        if gap_sec >= 0 and gap_sec < CONV_MERGE_MAX_GAP_SEC:
+            merged[-1] = (ps, max(pe, end_s))
+        else:
+            merged.append((start_s, end_s))
+
+    return merged
+
+
+def _segment_audio_features(seg: np.ndarray, sr: int = TARGET_SAMPLE_RATE) -> np.ndarray:
+    """Lightweight embedding for same-speaker clustering (no extra deps)."""
+    if len(seg) == 0:
+        return np.zeros(16, dtype=np.float64)
+    x = seg.astype(np.float64)
+    e = float(np.sqrt(np.mean(x * x)) + 1e-8)
+    zcr = float(np.mean(np.abs(np.diff(np.signbit(x))))) if len(x) > 1 else 0.0
+    n_fft = min(4096, max(256, len(x)))
+    spec = np.abs(np.fft.rfft(x[:n_fft]))
+    bands = 8
+    m = max(len(spec) // bands, 1)
+    band_e = [float(np.mean(spec[i * m : (i + 1) * m])) for i in range(bands)]
+    feat = np.array([e, zcr, float(np.std(x))] + band_e, dtype=np.float64)
+    nrm = np.linalg.norm(feat) + 1e-8
+    return feat / nrm
+
+
+def _kmeans_labels(features: np.ndarray, k: int, seed: int = 42) -> np.ndarray:
+    """Return cluster id 0..k-1 per row. Pure numpy; k clamped to n."""
+    rng = np.random.default_rng(seed)
+    n, d = features.shape
+    k = int(max(1, min(k, n)))
+    if k == 1:
+        return np.zeros(n, dtype=np.int32)
+    idx = rng.choice(n, k, replace=False)
+    centroids = features[idx].copy()
+    labels = np.zeros(n, dtype=np.int32)
+    for _ in range(35):
+        dists = np.sum((features[:, None, :] - centroids[None, :, :]) ** 2, axis=2)
+        labels = np.argmin(dists, axis=1).astype(np.int32)
+        new_c = np.zeros_like(centroids)
+        for j in range(k):
+            mask = labels == j
+            if np.any(mask):
+                new_c[j] = features[mask].mean(axis=0)
+            else:
+                new_c[j] = centroids[j] + rng.normal(0, 1e-3, d)
+        if np.allclose(new_c, centroids, rtol=1e-5, atol=1e-5):
+            break
+        centroids = new_c
+    return labels
+
+
+def _pick_speaker_cluster_count(num_segments: int) -> int:
+    """Heuristic cluster count for Doc / Patient / extra voices (max 4)."""
+    n = num_segments
+    if n <= 1:
+        return 1
+    if n <= 4:
+        return min(2, n)
+    if n <= 9:
+        return min(3, n)
+    return min(4, n)
+
+
+def _map_clusters_to_speaker_names(labels: np.ndarray) -> list[str]:
+    """Order clusters by time of first segment; assign Doc, Patient, Voice 1, Voice 2."""
+    first_pos: dict[int, int] = {}
+    for i, lab in enumerate(labels.tolist()):
+        if lab not in first_pos:
+            first_pos[lab] = i
+    unique_ids = sorted(int(u) for u in np.unique(labels))
+    cluster_ids = sorted(unique_ids, key=lambda c: first_pos.get(c, 10**9))
+    rename: dict[int, str] = {}
+    for rank, cid in enumerate(cluster_ids):
+        if rank < len(SPEAKER_LABEL_ORDER):
+            rename[cid] = SPEAKER_LABEL_ORDER[rank]
+        else:
+            rename[cid] = f"Voice {rank - 1}"
+    return [rename[int(l)] for l in labels.tolist()]
+
+
+def _format_conversation_document(
+    segments: list[dict],
+) -> tuple[str, str]:
+    """Plain text + simple Markdown with Doc/Patient/Voice headers in time order."""
+    lines_txt: list[str] = []
+    lines_md: list[str] = []
+    for seg in segments:
+        sp = seg["speaker"]
+        tx = (seg.get("text") or "").strip()
+        if not tx:
+            continue
+        lines_txt.append(f"{sp}:")
+        lines_txt.append(tx)
+        lines_txt.append("")
+        lines_md.append(f"### {sp}\n")
+        lines_md.append(f"{tx}\n\n")
+    return "\n".join(lines_txt).strip(), "".join(lines_md).strip()
+
+
+def _process_conversation_sync(pcm: np.ndarray, lang_code: str) -> dict:
+    """Segment full recording, cluster coarse speakers, transcribe each chunk, build document."""
+    sr = TARGET_SAMPLE_RATE
+    ranges = _segment_utterance_ranges(pcm, sr)
+    if not ranges:
+        return {
+            "language": lang_code,
+            "segments": [],
+            "document": "",
+            "document_md": "",
+            "note": "No speech detected in recording.",
+        }
+
+    chunks: list[np.ndarray] = []
+    starts: list[float] = []
+    ends: list[float] = []
+    for a, b in ranges:
+        a = max(0, min(a, len(pcm)))
+        b = max(a, min(b, len(pcm)))
+        seg = pcm[a:b]
+        if len(seg) < int(0.12 * sr):
+            continue
+        chunks.append(seg)
+        starts.append(a / sr)
+        ends.append(b / sr)
+
+    if not chunks:
+        return {
+            "language": lang_code,
+            "segments": [],
+            "document": "",
+            "document_md": "",
+            "note": "No usable utterances after segmentation.",
+        }
+
+    feats = np.stack([_segment_audio_features(c, sr) for c in chunks], axis=0)
+    k = _pick_speaker_cluster_count(len(chunks))
+    labels = _kmeans_labels(feats, k)
+    speaker_names = _map_clusters_to_speaker_names(labels)
+
+    segments_out: list[dict] = []
+    for idx, chunk in enumerate(chunks):
+        text = _run_inference(chunk, lang_code).strip()
+        segments_out.append({
+            "speaker": speaker_names[idx],
+            "text": text,
+            "start_sec": round(starts[idx], 2),
+            "end_sec": round(ends[idx], 2),
+        })
+
+    doc_txt, doc_md = _format_conversation_document(segments_out)
+    return {
+        "language": lang_code,
+        "segments": segments_out,
+        "document": doc_txt,
+        "document_md": doc_md,
+    }
+
+
+async def process_conversation_document(pcm: np.ndarray, lang_code: str) -> dict:
+    return await asyncio.to_thread(_process_conversation_sync, pcm, lang_code)
+
+
+# ─── Google Gemini 2.5 Flash (online STT) ────────────────────────────────────
+
+def gemini_online_enabled() -> bool:
+    return bool(GEMINI_API_KEY)
+
+
+def _mime_from_upload_filename(filename: str) -> str:
+    fn = filename.lower()
+    if fn.endswith(".webm"):
+        return "audio/webm"
+    if fn.endswith(".wav"):
+        return "audio/wav"
+    if fn.endswith(".mp3") or fn.endswith(".mpga") or fn.endswith(".mpeg"):
+        return "audio/mpeg"
+    if fn.endswith(".m4a") or fn.endswith(".mp4"):
+        return "audio/mp4"
+    if fn.endswith(".flac"):
+        return "audio/flac"
+    if fn.endswith(".ogg"):
+        return "audio/ogg"
+    return "application/octet-stream"
+
+
+def _gemini_multilingual_core_rules() -> str:
+    """Shared rules so Gemini transcribes any language (not Indic-only)."""
+    return (
+        "Multilingual speech rules: identify and transcribe every language actually spoken in the "
+        "audio. Support code-switching and mixed-language sentences. Use the normal writing system "
+        "(script) for each language as it would appear in standard text. Do not translate the speech "
+        "into another language unless the speaker is explicitly translating; otherwise preserve what "
+        "was said in the original language(s)."
+    )
+
+
+def _gemini_language_instruction(language_code: str) -> str:
+    """How to apply optional UI locale vs full auto-detect."""
+    code = (language_code or "").strip().lower()
+    if code in ("", "auto", "any", "multi", "*"):
+        return _gemini_multilingual_core_rules()
+
+    return (
+        _gemini_multilingual_core_rules()
+        + f" Optional user hint for ambiguous stretches: locale / tag `{language_code}` "
+        "(use as soft bias only; still transcribe any other language if it appears)."
+    )
+
+
+def _gemini_verbatim_prompt(language_code: str) -> str:
+    li = _gemini_language_instruction(language_code)
+    return (
+        f"{li}\n\n"
+        "Task: transcribe all speech in the attached audio.\n"
+        "Output rules: return ONLY the spoken words as plain text. "
+        "No timestamps, no speaker labels, no preamble or markdown."
+    )
+
+
+def _gemini_conversation_prompt(language_code: str) -> str:
+    li = _gemini_language_instruction(language_code)
+    return (
+        f"{li}\n\n"
+        "You are a medical documentation assistant. The audio may be a consultation with a doctor "
+        "(Doc), a patient (Patient), and possibly other people — label extras as Voice 1, Voice 2, "
+        "in order of first appearance after Doc and Patient.\n"
+        "Each segment's text must stay in whatever language(s) that speaker used (multilingual allowed).\n\n"
+        "Return ONLY valid JSON (no markdown fences) with this exact shape:\n"
+        '{"segments":[{"speaker":"Doc|Patient|Voice 1|Voice 2","text":"..."}],'
+        '"document":"plain text: each turn starts with Speaker: then newline then text, blank line between turns"}\n'
+        "Rules: segments must be in chronological order. "
+        "If you cannot distinguish roles, still split by speaker change and use Voice 1, Voice 2. "
+        "The document field must match the same content as segments formatted for a human reader."
+    )
+
+
+def _gemini_generate_text(user_prompt: str, mime_type: str, audio_bytes: bytes) -> str:
+    """Call Gemini generateContent; returns assistant text or raises RuntimeError."""
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY is not configured")
+
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    )
+    body_obj = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {"text": user_prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": mime_type,
+                            "data": base64.standard_b64encode(audio_bytes).decode("ascii"),
+                        }
+                    },
+                ],
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 8192,
+        },
+    }
+    data = json.dumps(body_obj).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=240) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        err = e.read().decode("utf-8", errors="replace")[:1200]
+        raise RuntimeError(f"Gemini API HTTP {e.code}: {err}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Gemini API network error: {e}") from e
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Gemini invalid JSON response: {e}") from e
+
+    if "error" in payload:
+        msg = payload.get("error", {}).get("message", str(payload["error"]))
+        raise RuntimeError(f"Gemini API error: {msg}")
+
+    candidates = payload.get("candidates") or []
+    if not candidates:
+        raise RuntimeError("Gemini returned no candidates (empty or blocked response)")
+
+    parts = (candidates[0].get("content") or {}).get("parts") or []
+    texts: list[str] = []
+    for p in parts:
+        if isinstance(p, dict) and "text" in p:
+            texts.append(p["text"])
+    if not texts:
+        raise RuntimeError("Gemini returned no text parts")
+
+    return "\n".join(texts).strip()
+
+
+def _strip_json_fence(text: str) -> str:
+    s = text.strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\s*```\s*$", "", s)
+    return s.strip()
+
+
+def _parse_gemini_conversation_json(text: str) -> Optional[dict]:
+    s = _strip_json_fence(text)
+    try:
+        obj = json.loads(s)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    segs = obj.get("segments")
+    if not isinstance(segs, list):
+        return None
+    cleaned: list[dict] = []
+    for item in segs:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker", "Speaker")).strip() or "Speaker"
+        tx = str(item.get("text", "")).strip()
+        if tx:
+            cleaned.append({"speaker": sp, "text": tx})
+    doc = str(obj.get("document", "")).strip()
+    if not doc and cleaned:
+        doc, _ = _format_conversation_document(
+            [{"speaker": s["speaker"], "text": s["text"]} for s in cleaned]
+        )
+    doc_md = str(obj.get("document_md", "")).strip()
+    if not doc_md and cleaned:
+        _, doc_md = _format_conversation_document(
+            [{"speaker": s["speaker"], "text": s["text"]} for s in cleaned]
+        )
+    return {"segments": cleaned, "document": doc, "document_md": doc_md}
+
+
+def _gemini_transcribe_upload_sync(
+    audio_bytes: bytes,
+    filename: str,
+    language_code: str,
+    prompt_type: str,
+) -> dict:
+    """Sync: call Gemini; returns JSON-serializable dict for HTTP response."""
+    mime = _mime_from_upload_filename(filename)
+    if mime == "application/octet-stream":
+        raise RuntimeError("Unsupported or unknown audio MIME type for Gemini")
+
+    if prompt_type == "conversation_doc":
+        prompt = _gemini_conversation_prompt(language_code)
+        raw_text = _gemini_generate_text(prompt, mime, audio_bytes)
+        parsed = _parse_gemini_conversation_json(raw_text)
+        if parsed is None:
+            plain = raw_text.strip()
+            parsed = {
+                "segments": [{"speaker": "Transcript", "text": plain}] if plain else [],
+                "document": plain,
+                "document_md": f"### Transcript\n\n{plain}\n" if plain else "",
+            }
+        return {
+            "provider": "google-gemini",
+            "model": GEMINI_MODEL,
+            "language": language_code,
+            "prompt_type": prompt_type,
+            "segments": parsed["segments"],
+            "document": parsed["document"],
+            "document_md": parsed["document_md"],
+        }
+
+    prompt = _gemini_verbatim_prompt(language_code)
+    raw_text = _gemini_generate_text(prompt, mime, audio_bytes)
+    return {
+        "provider": "google-gemini",
+        "model": GEMINI_MODEL,
+        "language": language_code,
+        "prompt_type": "verbatim",
+        "transcript": raw_text.strip(),
+    }
 
 
 # ─── Session Handler ───────────────────────────────────────────────────────────
@@ -674,6 +1153,10 @@ class BatchCapableConnection(ServerConnection):
 
             if path == "/batch/transcribe":
                 await self._handle_batch_transcribe(headers, body)
+            elif path == "/conversation/transcribe":
+                await self._handle_conversation_transcribe(headers, body)
+            elif path == "/online/gemini/transcribe":
+                await self._handle_gemini_transcribe(headers, body)
             else:
                 self._send_json_response(404, "Not Found",
                                          {"error": f"Unknown endpoint: {path}"})
@@ -709,10 +1192,9 @@ class BatchCapableConnection(ServerConnection):
         audio_data = file_info["data"]
 
         # Validate file extension
-        supported_exts = (".wav", ".mp3", ".flac", ".ogg", ".m4a")
-        if not any(filename.endswith(ext) for ext in supported_exts):
+        if not any(filename.endswith(ext) for ext in SUPPORTED_AUDIO_EXTS):
             self._send_json_response(400, "Bad Request",
-                                     {"error": f"Unsupported format. Supported: {', '.join(supported_exts)}"})
+                                     {"error": f"Unsupported format. Supported: {', '.join(SUPPORTED_AUDIO_EXTS)}"})
             return
 
         # Check job limit
@@ -760,6 +1242,137 @@ class BatchCapableConnection(ServerConnection):
             "language": language_code,
             "audio_duration": round(duration, 2),
         })
+
+    async def _handle_conversation_transcribe(self, headers: dict, body: bytes):
+        """POST /conversation/transcribe — full recording → segmented transcript + Doc/Patient/Voice doc."""
+        content_type = headers.get("content-type", "")
+
+        if "multipart/form-data" not in content_type:
+            self._send_json_response(400, "Bad Request",
+                                     {"error": "Content-Type must be multipart/form-data"})
+            return
+
+        if len(body) > BATCH_MAX_FILE_SIZE:
+            self._send_json_response(413, "Payload Too Large",
+                                     {"error": f"File exceeds {BATCH_MAX_FILE_SIZE // (1024*1024)}MB limit"})
+            return
+
+        fields = _parse_multipart(content_type, body)
+
+        if "file" not in fields or not isinstance(fields["file"], dict):
+            self._send_json_response(400, "Bad Request",
+                                     {"error": "Missing 'file' field in multipart form"})
+            return
+
+        file_info = fields["file"]
+        filename = file_info["filename"].lower()
+        audio_data = file_info["data"]
+
+        if not any(filename.endswith(ext) for ext in SUPPORTED_AUDIO_EXTS):
+            self._send_json_response(400, "Bad Request",
+                                     {"error": f"Unsupported format. Supported: {', '.join(SUPPORTED_AUDIO_EXTS)}"})
+            return
+
+        language_code = fields.get("language_code", "hi-IN")
+        if language_code not in LANG_MAP:
+            language_code = "hi-IN"
+
+        try:
+            pcm, duration = await _convert_audio_to_pcm(audio_data)
+        except Exception as e:
+            log.error(f"[conversation] Audio conversion failed: {e}", exc_info=True)
+            self._send_json_response(400, "Bad Request",
+                                     {"error": "Failed to decode audio file. Ensure valid format or ffmpeg for WebM/MP3."})
+            return
+
+        if duration > BATCH_MAX_AUDIO_DURATION:
+            self._send_json_response(400, "Bad Request",
+                                     {"error": f"Audio too long ({duration:.1f}s). Max {BATCH_MAX_AUDIO_DURATION:.0f}s"})
+            return
+
+        try:
+            result = await process_conversation_document(pcm, language_code)
+        except Exception as e:
+            log.error(f"[conversation] Processing failed: {e}", exc_info=True)
+            self._send_json_response(500, "Internal Server Error",
+                                     {"error": "Conversation processing failed"})
+            return
+
+        result["audio_duration_sec"] = round(duration, 2)
+        self._send_json_response(200, "OK", result)
+
+    async def _handle_gemini_transcribe(self, headers: dict, body: bytes):
+        """POST /online/gemini/transcribe — proxy to Google Gemini 2.5 Flash (speech → text)."""
+        content_type = headers.get("content-type", "")
+
+        if not gemini_online_enabled():
+            self._send_json_response(
+                503,
+                "Service Unavailable",
+                {"error": "Gemini is not configured. Set GEMINI_API_KEY (or GOOGLE_API_KEY) on the server."},
+            )
+            return
+
+        if "multipart/form-data" not in content_type:
+            self._send_json_response(400, "Bad Request",
+                                     {"error": "Content-Type must be multipart/form-data"})
+            return
+
+        if len(body) > BATCH_MAX_FILE_SIZE:
+            self._send_json_response(413, "Payload Too Large",
+                                     {"error": f"File exceeds {BATCH_MAX_FILE_SIZE // (1024*1024)}MB limit"})
+            return
+
+        fields = _parse_multipart(content_type, body)
+
+        if "file" not in fields or not isinstance(fields["file"], dict):
+            self._send_json_response(400, "Bad Request",
+                                     {"error": "Missing 'file' field in multipart form"})
+            return
+
+        file_info = fields["file"]
+        filename = file_info["filename"].lower()
+        audio_data = file_info["data"]
+
+        if not any(filename.endswith(ext) for ext in SUPPORTED_AUDIO_EXTS):
+            self._send_json_response(400, "Bad Request",
+                                     {"error": f"Unsupported format. Supported: {', '.join(SUPPORTED_AUDIO_EXTS)}"})
+            return
+
+        if len(audio_data) > GEMINI_MAX_UPLOAD_BYTES:
+            self._send_json_response(
+                413,
+                "Payload Too Large",
+                {"error": f"Audio exceeds Gemini upload limit ({GEMINI_MAX_UPLOAD_BYTES // (1024*1024)}MB)"},
+            )
+            return
+
+        language_code = (fields.get("language_code") or "auto").strip()
+        prompt_type = (fields.get("prompt_type") or "verbatim").strip().lower()
+        if prompt_type not in ("verbatim", "conversation_doc"):
+            prompt_type = "verbatim"
+
+        log.info(f"[gemini] Transcribe request | model={GEMINI_MODEL} | prompt={prompt_type} | bytes={len(audio_data)}")
+
+        try:
+            result = await asyncio.to_thread(
+                _gemini_transcribe_upload_sync,
+                audio_data,
+                filename,
+                language_code,
+                prompt_type,
+            )
+        except RuntimeError as e:
+            log.warning(f"[gemini] Failed: {e}")
+            self._send_json_response(502, "Bad Gateway", {"error": str(e)})
+            return
+        except Exception as e:
+            log.error(f"[gemini] Unexpected error: {e}", exc_info=True)
+            self._send_json_response(500, "Internal Server Error",
+                                     {"error": "Gemini transcription failed"})
+            return
+
+        self._send_json_response(200, "OK", result)
 
     def _send_cors_preflight(self):
         """Respond to an OPTIONS preflight request."""
@@ -835,6 +1448,8 @@ def _process_request(connection, request):
             "uptime_seconds":   round(time.time() - _server_start_time, 1),
             "batch_jobs_queued": queued,
             "batch_jobs_total":  len(_batch_jobs),
+            "gemini_online":    gemini_online_enabled(),
+            "gemini_model":     GEMINI_MODEL if gemini_online_enabled() else None,
         })
 
     # API key check — skip if no key configured (backwards compatible for local dev)

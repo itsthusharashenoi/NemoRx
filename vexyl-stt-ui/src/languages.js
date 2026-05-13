@@ -1,3 +1,4 @@
+/** Indic-focused list for local VEXYL-STT (model requires a known tag). */
 export const LANGUAGES = [
   { code: 'hi-IN', label: 'Hindi' },
   { code: 'ml-IN', label: 'Malayalam' },
@@ -13,4 +14,10 @@ export const LANGUAGES = [
   { code: 'ur-IN', label: 'Urdu' },
   { code: 'sa-IN', label: 'Sanskrit' },
   { code: 'ne-IN', label: 'Nepali' },
+];
+
+/** Gemini online: auto-detect any language, or bias toward one locale. */
+export const GEMINI_LANGUAGES = [
+  { code: 'auto', label: 'Auto-detect (any language)' },
+  ...LANGUAGES,
 ];

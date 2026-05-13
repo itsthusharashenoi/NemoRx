@@ -15,6 +15,10 @@ __pycache__/
 # Python venv
 vexyl-stt/venv/
 
+# Terminal Gemini capture outputs
+recordings/
+Transcriptis/
+
 # Node
 vexyl-stt-ui/node_modules/
 vexyl-stt-ui/dist/
