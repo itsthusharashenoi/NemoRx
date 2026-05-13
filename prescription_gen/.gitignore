@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+output.pdf
+filled_prescription.html
+.pytest_cache/

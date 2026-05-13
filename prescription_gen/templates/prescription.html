@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Prescription — {{ hospital_name }}</title>
+  <style>
+    @page { margin: 12mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: 11.5pt;
+      color: #1a1a1a;
+      margin: 0;
+      padding: 28px 36px 40px;
+      max-width: 900px;
+      margin-left: auto;
+      margin-right: auto;
+      background: #fff;
+    }
+    .rx-header {
+      display: flex;
+      align-items: stretch;
+      justify-content: space-between;
+      border-bottom: 3px solid #0d4f6c;
+      padding-bottom: 14px;
+      margin-bottom: 18px;
+    }
+    .rx-brand h1 {
+      margin: 0;
+      font-size: 1.55rem;
+      letter-spacing: 0.02em;
+      color: #0d4f6c;
+      font-weight: 700;
+    }
+    .rx-brand p {
+      margin: 4px 0 0;
+      font-size: 0.78rem;
+      color: #555;
+    }
+    .rx-logo {
+      width: 72px;
+      height: 72px;
+      border: 2px dashed #9bb8c4;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.65rem;
+      color: #6a8a9a;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .rx-meta {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 24px;
+      margin-bottom: 18px;
+      font-size: 0.92rem;
+    }
+    .rx-meta label {
+      display: block;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #666;
+      margin-bottom: 2px;
+    }
+    .rx-meta .line {
+      border-bottom: 1px solid #ccc;
+      min-height: 1.35em;
+      padding: 2px 0;
+    }
+    section {
+      margin-top: 16px;
+    }
+    section h2 {
+      margin: 0 0 8px;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #0d4f6c;
+      border-left: 4px solid #0d4f6c;
+      padding-left: 8px;
+    }
+    .pill-list {
+      margin: 0;
+      padding-left: 1.1em;
+    }
+    .pill-list li { margin: 3px 0; }
+    table.rx-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 6px;
+      font-size: 0.9rem;
+    }
+    table.rx-table th {
+      text-align: left;
+      background: #e8f2f6;
+      color: #0d4f6c;
+      padding: 8px 10px;
+      border: 1px solid #bcd4df;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    table.rx-table td {
+      padding: 8px 10px;
+      border: 1px solid #ddd;
+      vertical-align: top;
+    }
+    table.rx-table tr:nth-child(even) td { background: #fafcfd; }
+    .follow { font-weight: 600; color: #333; }
+    .validation {
+      margin-top: 22px;
+      padding: 12px 14px;
+      background: #f8f4e8;
+      border: 1px solid #e0d4b8;
+      border-radius: 6px;
+      font-size: 0.82rem;
+    }
+    .validation strong { color: #7a5a00; }
+    .flags { margin: 6px 0 0; padding-left: 1.2em; color: #444; }
+    .sign-row {
+      margin-top: 36px;
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      font-size: 0.88rem;
+    }
+    .sign-box {
+      flex: 1;
+      border-top: 1px solid #333;
+      padding-top: 8px;
+      text-align: center;
+    }
+    .audit {
+      margin-top: 20px;
+      font-size: 0.72rem;
+      color: #666;
+      border-top: 1px dashed #ccc;
+      padding-top: 10px;
+      page-break-before: always;
+      break-before: page;
+    }
+    .audit pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 6px 0 0;
+      font-family: ui-monospace, monospace;
+      background: #f5f5f5;
+      padding: 8px;
+      border-radius: 4px;
+    }
+    .block-banner {
+      background: #fdeaea;
+      border: 1px solid #e8a0a0;
+      color: #8b1a1a;
+      padding: 10px 12px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <header class="rx-header">
+    <div class="rx-brand">
+      <h1>{{ hospital_name }}</h1>
+      <p>{{ hospital_tagline }}</p>
+    </div>
+    {% if logo_placeholder %}
+    <div class="rx-logo">Hospital<br/>logo</div>
+    {% endif %}
+  </header>
+
+  {% if block_signoff %}
+  <div class="block-banner">Sign-off blocked: resolve critical medication issues before final signature.</div>
+  {% endif %}
+
+  <div class="rx-meta">
+    <div>
+      <label>Date</label>
+      <div class="line">{{ prescription_date }}</div>
+    </div>
+    <div>
+      <label>OPD / Patient ID</label>
+      <div class="line">{{ patient_id }}</div>
+    </div>
+    <div>
+      <label>Patient name</label>
+      <div class="line">{{ patient_name }}</div>
+    </div>
+    <div>
+      <label>Age / Sex</label>
+      <div class="line">{{ patient_age_sex }}</div>
+    </div>
+    <div>
+      <label>Prescribing physician</label>
+      <div class="line">{{ doctor_name }}</div>
+    </div>
+    <div>
+      <label>&nbsp;</label>
+      <div class="line">{{ registration_no }}</div>
+    </div>
+  </div>
+
+  {% if vitals %}
+  <section>
+    <h2>Vitals</h2>
+    <ul class="pill-list">
+      {% for v in vitals %}<li>{{ v }}</li>{% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if clinical_notes %}
+  <section>
+    <h2>Clinical notes</h2>
+    <ul class="pill-list">
+      {% for n in clinical_notes %}<li>{{ n }}</li>{% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  <section>
+    <h2>Chief complaint</h2>
+    {% if chief_complaint %}
+    <ul class="pill-list">
+      {% for c in chief_complaint %}<li>{{ c }}</li>{% endfor %}
+    </ul>
+    {% else %}<p>—</p>{% endif %}
+  </section>
+
+  <section>
+    <h2>Diagnosis</h2>
+    {% if diagnosis %}
+    <ul class="pill-list">
+      {% for d in diagnosis %}<li>{{ d }}</li>{% endfor %}
+    </ul>
+    {% else %}<p>—</p>{% endif %}
+  </section>
+
+  <section>
+    <h2>Prescribed medications</h2>
+    {% if medications %}
+    <table class="rx-table">
+      <thead>
+        <tr>
+          <th>Medicine</th>
+          <th>Dose</th>
+          <th>Frequency</th>
+          <th>Duration</th>
+          <th>Instructions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in medications %}
+        <tr>
+          <td>
+            <strong>{{ m.name }}</strong>
+            {% if m.generic_name and m.generic_name|lower != m.name|lower %}
+            <br/><span style="font-size:0.85em;color:#555;">{{ m.generic_name }}</span>
+            {% endif %}
+          </td>
+          <td>{% if m.dose %}{{ m.dose }}{% endif %}</td>
+          <td>{% if m.frequency %}{{ m.frequency }}{% if m.frequency_expanded %}<br/><span style="font-size:0.8em;color:#555;">{{ m.frequency_expanded }}</span>{% endif %}{% elif m.frequency_expanded %}<span style="font-size:0.8em;color:#555;">{{ m.frequency_expanded }}</span>{% endif %}</td>
+          <td>{% if m.duration %}{{ m.duration }}{% endif %}</td>
+          <td>{% if m.instructions %}{{ m.instructions }}{% elif m.route %}{{ m.route }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p>—</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Investigations</h2>
+    {% if investigations %}
+    <ul class="pill-list">
+      {% for i in investigations %}<li>{{ i }}</li>{% endfor %}
+    </ul>
+    {% else %}<p>—</p>{% endif %}
+  </section>
+
+  <section>
+    <h2>Follow-up</h2>
+    <p class="follow">{{ follow_up }}</p>
+  </section>
+
+  <section>
+    <h2>Advice</h2>
+    {% if general_advice %}
+    <ul class="pill-list">
+      {% for a in general_advice %}<li>{{ a }}</li>{% endfor %}
+    </ul>
+    {% else %}<p>—</p>{% endif %}
+  </section>
+
+  <div class="validation">
+    <strong>Validation</strong> — automated confidence score: <strong>{{ confidence_score }} / 100</strong>
+    {% if confidence_flags %}
+    <ul class="flags">
+      {% for f in confidence_flags %}<li>{{ f }}</li>{% endfor %}
+    </ul>
+    {% else %}
+    <p class="flags">No flags.</p>
+    {% endif %}
+  </div>
+
+  <div class="sign-row">
+    <div class="sign-box">Doctor signature & stamp</div>
+    <div class="sign-box">Pharmacy / dispensing</div>
+  </div>
+
+  <div class="audit">
+    <strong>Source conversation (excerpt)</strong>
+    <pre>{{ raw_conversation_excerpt }}</pre>
+  </div>
+</body>
+</html>

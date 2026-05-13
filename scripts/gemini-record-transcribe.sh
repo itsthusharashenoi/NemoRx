@@ -128,3 +128,18 @@ if [[ "${GEMINI_VERBATIM:-0}" != "1" ]]; then
 fi
 python3 "$SCRIPT_DIR/_gemini_transcribe.py" "${PY_ARGS[@]}"
 echo "Done. (If a patient name was found: patient .txt is written and gemini .txt removed; WAV moved to <name>-${STAMP}.wav.)"
+
+if [[ "${PRESCRIBE_AFTER_TRANSCRIBE:-0}" == "1" ]]; then
+  PRE_DIR="$REPO_ROOT/prescription_gen"
+  if [[ -f "$PRE_DIR/run.py" ]]; then
+    LATEST="$(ls -t "$TRANSCRIPTS"/*.txt 2>/dev/null | head -1 || true)"
+    if [[ -n "${LATEST:-}" && -f "$LATEST" ]]; then
+      echo "PRESCRIBE_AFTER_TRANSCRIBE=1 — running prescription pipeline on: $LATEST"
+      python3 "$PRE_DIR/run.py" --input "$LATEST" || echo "Warning: prescription step exited non-zero." >&2
+    else
+      echo "Warning: PRESCRIBE_AFTER_TRANSCRIBE set but no .txt found under $TRANSCRIPTS" >&2
+    fi
+  else
+    echo "Warning: prescription_gen missing at $PRE_DIR (skipping prescription)." >&2
+  fi
+fi

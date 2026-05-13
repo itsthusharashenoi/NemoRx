@@ -1,0 +1,5 @@
+Doctor: How are you feeling?
+
+Patient: Fever since two days. Khansi bhi hai.
+
+Doctor: Take Dolo 650 BD after food for 5 days. CBC karwao. Review in 5 days.

@@ -19,6 +19,12 @@ vexyl-stt/venv/
 recordings/
 Transcriptis/
 
+# Prescription generator (local secrets + outputs)
+prescription_gen/.env
+prescription_gen/output.pdf
+prescription_gen/filled_prescription.html
+prescription_gen/.pytest_cache/
+
 # Node
 vexyl-stt-ui/node_modules/
 vexyl-stt-ui/dist/

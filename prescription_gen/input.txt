@@ -1,0 +1,13 @@
+Doctor: Good morning. What brings you in today?
+
+Patient: Namaste doctor. Mujhe teen din se bukhar hai aur khansi bhi hai. Sar mein dard bhi hai.
+
+Doctor: I see. Any vomiting?
+
+Patient: Nahi, ulti nahi hui.
+
+Doctor: This looks like a viral URTI. I'll give you Dolo 650 BD after food for 5 days, and Montair LC at bedtime for 5 days. Also Pan 40 empty stomach in the morning for 5 days.
+
+Patient: Theek hai, kuch test?
+
+Doctor: Yes — get a CBC and urine routine. Review after 5 days if not better. Drink plenty of fluids and rest.
